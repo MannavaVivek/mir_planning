@@ -12,4 +12,5 @@ def perform_stage(instance, action):
         instance.problem.set_initial_value(instance.fluents_dict['occupied'](instance.objects_dict[action_params[1]]), True)
         return True
     elif user_input == 'N' or user_input == 'n':
+        #TODO: check what plan is generated if this fails
         return False

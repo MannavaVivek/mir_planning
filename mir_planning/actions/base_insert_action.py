@@ -17,4 +17,15 @@ def perform_insert(instance, action):
         instance.problem.set_initial_value(instance.fluents_dict['occupied'](instance.objects_dict[action_params[1]]), False)
         return True
     elif user_input == 'N' or user_input == 'n':
+        if action_params[3] in instance.failure_count.keys():
+            instance.failure_count[action_params[3]] += 1
+        else:
+            instance.failure_count[action_params[3]] = 1
+        count = instance.failure_count[action_params[3]]
+        if count > 2:
+            #TODO : need to deal with this failure to insert 
+            instance.get_logger.warn(f" Insert failed for {action_params[3]} {count} times")
+            instance.problem.set_initial_value(instance.fluents_dict['at'](instance.objects_dict[action_params[0]], instance.objects_dict[action_params[2]]), False)
+            instance.problem.set_initial_value(instance.fluents_dict['at'](instance.objects_dict[action_params[0]], instance.objects_dict["start"]), True)
+            instance.failure_count[action_params[3]] = 1
         return False
