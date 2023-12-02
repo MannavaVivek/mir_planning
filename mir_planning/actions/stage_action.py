@@ -13,4 +13,5 @@ def perform_stage(instance, action):
         return True
     elif user_input == 'N' or user_input == 'n':
         #TODO: check what plan is generated if this fails
+        instance.get_logger().warn(f"Stage failed for {action_params[2]} but nothing changed in KB")
         return False

@@ -18,7 +18,7 @@ def perform_perceive(instance, action, object):
         instance.problem.set_initial_value(instance.fluents_dict['at'](instance.objects_dict[action_params[0]], instance.objects_dict["start"]), True)
         count = instance.failure_count[object]
         if count > 2:
-            instance.get_logger.warn(f" Perceive failed for {object} {count} times")
+            instance.get_logger().warn(f" Perceive failed for {object} {count} times")
             instance.remove_goal_with_object(object)
             instance.failure_count[object] = 0
         return False
