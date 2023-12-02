@@ -115,6 +115,15 @@ class PlannerExecutor(Node):
         self.goals = [goal for goal in self.goals if goal not in self.removed_goals]
         self.problem.clear_goals()
 
+    def remove_goals_with_location(self, location):
+        for goal in self.goals:
+            goal_str = str(goal)
+            if location in goal_str:
+                self.removed_goals.append(goal)
+        self.goals = [goal for goal in self.goals if location not in self.removed_goals]
+        #TODO: doing it with removed goals for now. might cause issues in retries
+        self.problem.clear_goals()
+
     def remove_successful_goals(self):
         self.goals = [goal for goal in self.goals if goal not in self.problem.goals]
         self.problem.clear_goals()
@@ -127,13 +136,17 @@ class PlannerExecutor(Node):
             self.problem.add_goal(goal)
         self.plan = self.planner.solve(self.problem).plan.actions
         result = True
-        for action in self.plan:
+        for idx, action in enumerate(self.plan):
             action_name = action.action.name
                 
-            if action_name == "move_base": # TODO: need to organize this better
+            if action_name == "move_base": # TODO: need to organize this     better
                 result = perform_move_base(self, action)
             elif action_name == "perceive":
-                result = perform_perceive(self, action)
+                if idx+1 < len(self.plan) and (self.plan[idx + 1].action.name == "pick" or self.plan[idx + 1].action.name == "PICK"):
+                    pick_params = [str(params) for params in self.plan[idx + 1].actual_parameters]
+                    result = perform_perceive(self, action, pick_params[2])
+                else:
+                    result = perform_perceive(self, action, "mystery_object") # if it came to this, something went very wrong
             elif action_name == "pick":
                 result = perform_pick(self, action)
             elif action_name == "stage_general" or action_name == "stage_large":
