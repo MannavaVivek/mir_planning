@@ -4,8 +4,12 @@ from unified_planning.engines import PlanGenerationResultStatus
 import unified_planning as up
 from rclpy.node import Node
 import rclpy
+from std_srvs.srv import Empty
 import os
 from ament_index_python.packages import get_package_share_directory
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
+from custom_interfaces.srv import UPFGoal
 
 from actions.base_insert_action import perform_insert
 from actions.move_base_action import perform_move_base
@@ -21,6 +25,8 @@ class PlannerExecutor(Node):
         super().__init__("planner_executor")
         up.shortcuts.get_environment().credits_stream = None
         self.pddl_reader = PDDLReader()
+        self.srv = self.create_service(UPFGoal, 'test_service', callback=self.service_callback)
+        self.timer = self.create_timer(2, self.timer_callback)
 
         self.execution_started = False
 
@@ -75,35 +81,49 @@ class PlannerExecutor(Node):
                 self.goals.append(goal)
         self.problem.clear_goals()
 
-        execution_count = 0
-        while execution_count <= 3:
-            sorted_goals = []
-            is_goals = 0
-            for i in range(3):
-                is_goals, sorted_goals = self.check_for_goals()
-                if is_goals:
-                    break
-                else:
-                    # TODO: should wait for some time?
-                    self.get_logger().info(f"Try {i}: No goals to execute. retrying...")
+        self.execution_count = 0
 
+    def timer_callback(self):
+        if self.execution_count >= 3:
+            self.get_logger().info('Counter limit exceeded. Shutting down node.')
+            self.timer.cancel()  # Stop the timer
+
+        sorted_goals = []
+        is_goals = 0
+        for i in range(3):
+            is_goals, sorted_goals = self.check_for_goals()
             if is_goals:
-                self.execution_started = True
-                self.execute(sorted_goals)
+                break
             else:
-                if self.execution_started:
-                    self.get_logger().info(
-                        "All goals executed. Waiting for new goals..."
-                    )
-                    execution_count += 1
-                    if len(self.removed_goals) > 0:
-                        self.goals = self.removed_goals
-                        self.removed_goals = []
-                    else:
-                        break
-                else:
-                    self.get_logger().info("Waiting for goals to start execution...")
+                # TODO: should wait for some time?
+                self.get_logger().info(f"Try {i}: No goals to execute. retrying...")
 
+        if is_goals:
+            self.execution_started = True
+            self.execute(sorted_goals)
+        else:
+            if self.execution_started:
+                self.get_logger().info(
+                    "All goals executed. Waiting for new goals..."
+                )
+                self.execution_count += 1
+                if len(self.removed_goals) > 0:
+                    self.goals = self.removed_goals
+                    self.removed_goals = []
+                else:
+                    self.timer.cancel()
+                    self.execution_count = 5
+                    return
+            else:
+                self.get_logger().info("Waiting for goals to start execution...")
+
+    def service_callback(self, request, result):
+        self.get_logger().info(f"Received request: {request}")
+        # print result
+        result.goal_result = request.goal_name
+        print(result)
+        return result
+    
     def check_for_goals(self):
         if len(self.goals) == 0:
             return (False, [])
@@ -186,6 +206,8 @@ class PlannerExecutor(Node):
 def main():
     rclpy.init()
     planner_executor = PlannerExecutor()
+    executor = MultiThreadedExecutor()
+    executor.add_node(planner_executor)
     rclpy.spin(planner_executor)
     planner_executor.destroy_node()
     rclpy.shutdown()
