@@ -9,7 +9,6 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
-from custom_interfaces.srv import UPFGoal
 
 from actions.base_insert_action import perform_insert
 from actions.move_base_action import perform_move_base
@@ -25,7 +24,6 @@ class PlannerExecutor(Node):
         super().__init__("planner_executor")
         up.shortcuts.get_environment().credits_stream = None
         self.pddl_reader = PDDLReader()
-        self.srv = self.create_service(UPFGoal, 'test_service', callback=self.service_callback)
         self.timer = self.create_timer(2, self.timer_callback)
 
         self.execution_started = False
@@ -116,13 +114,6 @@ class PlannerExecutor(Node):
                     return
             else:
                 self.get_logger().info("Waiting for goals to start execution...")
-
-    def service_callback(self, request, result):
-        self.get_logger().info(f"Received request: {request}")
-        # print result
-        result.goal_result = request.goal_name
-        print(result)
-        return result
     
     def check_for_goals(self):
         if len(self.goals) == 0:
