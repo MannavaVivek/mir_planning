@@ -33,12 +33,27 @@ A launch file is provided to start the normal version of the node. However, due 
 
 Ensure that you have ROS2 and the Unified Planning Framework installed.
 
-1. Clone the repository into your ROS2 workspace src directory `git clone https://github.com/MannavaVivek/mir_planning.git`.
-2. Build the package using `colcon build --symlink-install --packages-select mir_planning`.
+1. Clone the repository into your ROS2 workspace src directory 
+    ```
+    git clone https://github.com/MannavaVivek/mir_planning.git
+    ```
+2. Build the package using 
+    ```
+    colcon build --symlink-install --packages-select mir_planning
+    ```
 3. Source the setup script.
 4. Run the node with:
-   - `ros2 run mir_planning mir_planner_executor --ros-args -p domain:=<path_to_domain_file> -p problem:=<path_to_problem_file>`
-   - Use the launch file for the non-lifecycle version with `ros2 launch mir_planning mir_planner_launch.py`.
+    ```
+    ros2 run mir_planning mir_planner_executor
+    ```
+    Or if you want to provide your custom pddl files:
+    ```
+    ros2 run mir_planning mir_planner_executor --ros-args -p domain:=<path_to_domain_file> -p problem:=<path_to_problem_file>
+    ```
+    Use the launch file for the non-lifecycle version with 
+    ```
+    ros2 launch mir_planning mir_planner_launch.py
+    ```
 
 ## Dependencies
 
