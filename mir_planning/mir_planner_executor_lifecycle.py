@@ -1,0 +1,238 @@
+from unified_planning.io import PDDLReader
+from unified_planning.shortcuts import *
+from unified_planning.engines import PlanGenerationResultStatus
+import unified_planning as up
+import rclpy
+import os
+from ament_index_python.packages import get_package_share_directory
+from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
+
+from actions.base_insert_action import perform_insert
+from actions.move_base_action import perform_move_base
+from actions.base_perceive_action import perform_perceive
+from actions.base_pick_action import perform_pick
+from actions.base_place_action import perform_place
+from actions.stage_action import perform_stage
+from actions.unstage_action import perform_unstage
+
+from rclpy.lifecycle import Node
+from rclpy.lifecycle import Publisher
+from rclpy.lifecycle import State
+from rclpy.lifecycle import TransitionCallbackReturn
+from rclpy.timer import Timer
+
+
+class PlannerExecutor(Node):
+    def __init__(self):
+        self._timer: Optional[Timer] = None
+
+        super().__init__("planner_executor")
+
+    def on_configure(self, state) -> TransitionCallbackReturn:
+        self.get_logger().info("Configuring...")
+        self.pddl_reader = PDDLReader()
+
+        self.execution_started = False
+
+        self.get_logger().info("Getting pddl files...")
+        domain_file = os.path.join(
+            get_package_share_directory("mir_planning"), "config", "domain.pddl"
+        )
+
+        problem_file = os.path.join(
+            get_package_share_directory("mir_planning"),
+            "config",
+            "smaller_problem.pddl",
+        )
+
+        self.declare_parameters(
+            namespace="",
+            parameters=[("domain_path", domain_file), ("problem_path", problem_file)],
+        )
+
+        self.domain_path = (
+            self.get_parameter("domain_path").get_parameter_value().string_value
+        )
+        self.problem_path = (
+            self.get_parameter("problem_path").get_parameter_value().string_value
+        )
+
+        self.problem = self.pddl_reader.parse_problem(
+            self.domain_path, self.problem_path
+        )
+
+        self.get_logger().info("Creating planner...")
+        self.planner = OneshotPlanner(
+            problem_kind=self.problem.kind,
+            optimality_guarantee=PlanGenerationResultStatus.SOLVED_OPTIMALLY,
+        )
+
+        # create a dictionary of fluents and objects to update the initial states
+        self.fluents_dict = {}
+        for fluent in self.problem.fluents:
+            self.fluents_dict[str(fluent.name)] = self.problem.fluent(f"{fluent.name}")
+
+        self.objects_dict = {}
+        for obj in self.problem.all_objects:
+            self.objects_dict[str(obj.name)] = self.problem.object(f"{obj.name}")
+
+        self.failure_count = {}
+        self.goals = []
+        self.removed_goals = []
+
+        self.get_logger().info("Redirecting goals...")
+        for goal in self.problem.goals:
+            if goal.is_and():
+                for g in goal.args:
+                    self.goals.append(g)
+            else:
+                self.goals.append(goal)
+        self.problem.clear_goals()
+
+        self.execution_count = 0
+
+        self.get_logger().info("Configuration complete...")
+        return TransitionCallbackReturn.SUCCESS
+    
+    def on_activate(self, state) -> TransitionCallbackReturn:
+        self.get_logger().info("Activating...")
+        self._timer = self.create_timer(2, self.timer_callback)
+        return super().on_activate(state)
+    
+    def on_deactivate(self, state) -> TransitionCallbackReturn:
+        self.get_logger().info("Deactivating...")
+        return super().on_deactivate(state)
+    
+    def on_cleanup(self, state) -> TransitionCallbackReturn:
+        self.get_logger().info("Cleaning up...")
+        self._timer.cancel()
+        self.problem = None
+        self.planner = None
+        return super().on_cleanup(state)
+
+    def on_shutdown(self, state) -> TransitionCallbackReturn:
+        self.get_logger().info("Shutting down...")
+        return super().on_shutdown(state)
+
+    def timer_callback(self):
+        if self.execution_count >= 3:
+            self.get_logger().info('Counter limit exceeded. Shutting down node.')
+            self.timer.cancel()  # Stop the timer
+
+        sorted_goals = []
+        is_goals = 0
+        for i in range(3):
+            is_goals, sorted_goals = self.check_for_goals()
+            if is_goals:
+                break
+            else:
+                # TODO: should wait for some time?
+                self.get_logger().info(f"Try {i}: No goals to execute. retrying...")
+
+        if is_goals:
+            self.execution_started = True
+            self.execute(sorted_goals)
+        else:
+            if self.execution_started:
+                self.get_logger().info(
+                    "All goals executed. Waiting for new goals..."
+                )
+                self.execution_count += 1
+                if len(self.removed_goals) > 0:
+                    self.goals = self.removed_goals
+                    self.removed_goals = []
+                else:
+                    self._timer.cancel()
+                    self.execution_count = 5
+                    return
+            else:
+                self.get_logger().info("Waiting for goals to start execution...")
+    
+    def check_for_goals(self):
+        if len(self.goals) == 0:
+            return (False, [])
+        else:
+            self.sorted_goals = []
+            if len(self.goals) >= 3:
+                for i in range(3):
+                    self.sorted_goals.append(self.goals[i])
+            else:
+                for i in range(len(self.goals)):
+                    self.sorted_goals.append(self.goals[i])
+            return (True, self.sorted_goals)
+
+    def remove_goal_with_object(self, object_name):
+        for goal in self.problem.goals:
+            goal_str = str(goal)
+            if object_name in goal_str:
+                self.removed_goals.append(goal)
+
+        self.goals = [goal for goal in self.goals if goal not in self.removed_goals]
+        self.problem.clear_goals()
+
+    def remove_goals_with_location(self, location):
+        for goal in self.goals:
+            goal_str = str(goal)
+            if location in goal_str:
+                self.removed_goals.append(goal)
+        self.goals = [goal for goal in self.goals if location not in self.removed_goals]
+        # TODO: doing it with removed goals for now. might cause issues in retries
+        self.problem.clear_goals()
+
+    def remove_successful_goals(self):
+        self.goals = [goal for goal in self.goals if goal not in self.problem.goals]
+        self.problem.clear_goals()
+
+    def execute(self, goals):
+        self.get_logger().info("Executing goals...")
+        self.problem.clear_goals()
+        for goal in goals:
+            self.get_logger().info(f"\t{goal}")
+            self.problem.add_goal(goal)
+        self.plan = self.planner.solve(self.problem).plan.actions
+        result = True
+        for idx, action in enumerate(self.plan):
+            action_name = action.action.name
+
+            if action_name == "move_base":  # TODO: need to organize this     better
+                result = perform_move_base(self, action)
+            elif action_name == "perceive":
+                if idx + 1 < len(self.plan) and (
+                    self.plan[idx + 1].action.name == "pick"
+                    or self.plan[idx + 1].action.name == "PICK"
+                ):
+                    pick_params = [
+                        str(params) for params in self.plan[idx + 1].actual_parameters
+                    ]
+                    result = perform_perceive(self, action, pick_params[2])
+                else:
+                    result = perform_perceive(
+                        self, action, "mystery_object"
+                    )  # if it came to this, something went very wrong
+            elif action_name == "pick":
+                result = perform_pick(self, action)
+            elif action_name == "stage_general" or action_name == "stage_large":
+                result = perform_stage(self, action)
+            elif action_name == "unstage":
+                result = perform_unstage(self, action)
+            elif action_name == "place":
+                result = perform_place(self, action)
+            elif action_name == "insert":
+                result = perform_insert(self, action)
+
+            if not result:
+                break
+
+        if result:
+            self.remove_successful_goals()
+
+
+def main():
+    rclpy.init()
+    planner_executor = PlannerExecutor()
+    executor = SingleThreadedExecutor()
+    executor.add_node(planner_executor)
+    rclpy.spin(planner_executor)
+    print("Exiting...")
+    planner_executor.destroy_node()
+    rclpy.shutdown()

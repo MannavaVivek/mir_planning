@@ -28,7 +28,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'mir_planner_executor = mir_planning.mir_planner_executor:main'
+            'mir_planner_executor = mir_planning.mir_planner_executor:main',
+            'lc_planner_executor = mir_planning.mir_planner_executor_lifecycle:main'
         ],
     },
 )
